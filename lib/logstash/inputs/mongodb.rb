@@ -145,14 +145,16 @@ class LogStash::Inputs::MongoDB < LogStash::Inputs::Base
 
   public
   def get_cursor_for_collection(mongodb, mongo_collection_name, last_id_object, batch_size)
+    @logger.info("Get cursor for collection #{mongo_collection_name} ...")
     collection = mongodb.collection(mongo_collection_name)
     # Need to make this sort by date in object id then get the first of the series
     # db.events_20150320.find().limit(1).sort({ts:1})
-    return collection.find({:_id => {:$gt => last_id_object}}).limit(batch_size)
+    return collection.find({}).limit(batch_size)
   end
 
   public
   def update_watched_collections(mongodb, collection, sqlitedb)
+    @logger.info("Updated watched collections ...")
     collections = get_collection_names(mongodb, collection)
     collection_data = {}
     collections.each do |my_collection|
@@ -163,6 +165,20 @@ class LogStash::Inputs::MongoDB < LogStash::Inputs::Base
       end
     end
     return collection_data
+  end
+
+  public
+  def remove_entry(mongodb, mongo_collection_name, id_object)
+    @logger.info("Remove tracking entry from database in #{mongo_collection_name} ... #{id_object}")
+    collection = mongodb.collection(mongo_collection_name)
+    return collection.delete_one({:_id => BSON::ObjectId(id_object)})
+  end
+
+  public
+  def remove_entries(mongodb, mongo_collection_name, entries)
+    @logger.info("Remove tracking entries from database in #{mongo_collection_name} ... #{entries.count()}")
+    collection = mongodb.collection(mongo_collection_name)
+    return collection.delete_many({:_id => {:$in => entries}})
   end
 
   public
@@ -226,6 +242,7 @@ class LogStash::Inputs::MongoDB < LogStash::Inputs::Base
     sleep_min = 0.01
     sleep_max = 5
     sleeptime = sleep_min
+    entries_handled = []
 
     @logger.debug("Tailing MongoDB")
     @logger.debug("Collection data is: #{@collection_data}")
@@ -365,8 +382,14 @@ class LogStash::Inputs::MongoDB < LogStash::Inputs::Base
               since_id = doc[since_column].to_i
             end
 
+            
             @collection_data[index][:last_id] = since_id
+            entries_handled.push(BSON::ObjectId(since_id))
+            @logger.info("Mark #{since_id} as handled ... #{entries_handled.count()}")
+            # remove_entry(@mongodb, collection_name, since_id)
           end
+          remove_entries(@mongodb, collection_name, entries_handled)
+          entries_handled=[]
           # Store the last-seen doc in the database
           update_placeholder(@sqlitedb, since_table, collection_name, @collection_data[index][:last_id])
         end
