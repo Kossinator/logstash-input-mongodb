@@ -73,6 +73,10 @@ class LogStash::Inputs::MongoDB < LogStash::Inputs::Base
   # The default, `1`, means send a message every second.
   config :interval, :validate => :number, :default => 1
 
+  config :delete_enable, :validate => :boolean, :required => false, :default => true
+
+  config :delete_bulk, :validate => :boolean, :required => false, :default => true
+
   SINCE_TABLE = :since_table
 
   public
@@ -168,17 +172,19 @@ class LogStash::Inputs::MongoDB < LogStash::Inputs::Base
   end
 
   public
-  def remove_entry(mongodb, mongo_collection_name, id_object)
-    @logger.info("Remove tracking entry from database in #{mongo_collection_name} ... #{id_object}")
-    collection = mongodb.collection(mongo_collection_name)
-    return collection.delete_one({:_id => BSON::ObjectId(id_object)})
-  end
-
-  public
   def remove_entries(mongodb, mongo_collection_name, entries)
-    @logger.info("Remove tracking entries from database in #{mongo_collection_name} ... #{entries.count()}")
-    collection = mongodb.collection(mongo_collection_name)
-    return collection.delete_many({:_id => {:$in => entries}})
+    if @delete_enable
+      @logger.info("Remove tracking entries from database in #{mongo_collection_name} ... #{entries.count()}")
+      collection = mongodb.collection(mongo_collection_name)
+      if @delete_bulk
+        @logger.debug("Remove with bulk-method ...")
+        return collection.delete_many({:_id => {:$in => entries}})
+      end
+      @logger.debug("Remove with single-method ...")
+      entries.each do |id_object|
+        collection.delete_one({:_id => BSON::ObjectId(id_object)})
+      end
+    end
   end
 
   public
@@ -386,7 +392,6 @@ class LogStash::Inputs::MongoDB < LogStash::Inputs::Base
             @collection_data[index][:last_id] = since_id
             entries_handled.push(BSON::ObjectId(since_id))
             @logger.info("Mark #{since_id} as handled ... #{entries_handled.count()}")
-            # remove_entry(@mongodb, collection_name, since_id)
           end
           remove_entries(@mongodb, collection_name, entries_handled)
           entries_handled=[]
